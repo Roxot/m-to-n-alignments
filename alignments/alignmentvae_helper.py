@@ -17,16 +17,23 @@ def create_model(hparams, vocab_src, vocab_tgt):
                         pooling=hparams.pooling,
                         bidirectional=hparams.bidirectional,
                         num_layers=hparams.num_layers,
-                        cell_type=hparams.cell_type)
+                        cell_type=hparams.cell_type,
+                        max_sentence_length=hparams.max_sentence_length)
 
 def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparams, step):
     qa = model.approximate_posterior(x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y)
     pa = model.prior(seq_mask_x, seq_len_x, seq_mask_y)
     A = qa.rsample()
     logits = model(x, A)
+
+    if hparams.KL_annealing_steps > 0:
+        KL_multiplier = min(1.0, float(step) / hparams.KL_annealing_steps)
+    else:
+        KL_multiplier = 1.0
+
     output_dict = model.loss(logits=logits, y=y, A=A, seq_mask_x=seq_mask_x,
                              seq_mask_y=seq_mask_y, pa=pa, qa=qa,
-                             reduction="mean")
+                             KL_multiplier=KL_multiplier, reduction="mean")
     return output_dict["loss"]
 
 def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
@@ -59,8 +66,9 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
                 ones = torch.ones_like(qa.base.a)
                 p0 = qa.log_prob(zeros)
                 p1 = qa.log_prob(ones)
-                # We're ignoring continuous now.
-                A = torch.where(p1 > p0, ones, zeros)
+                # pc = ones - p0 - p1
+                A = torch.where(p0 > p1, zeros, ones)
+                # A = torch.where(p0 > pc, A, ones) # only 0 if argmax(p0, p1, pc) = p0
             else:
                 raise NotImplementedError()
 

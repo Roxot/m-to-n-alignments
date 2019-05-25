@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as torchdist
+import numpy as np
 
 from alignments.constants import epsilon
 from alignments.dist import BernoulliREINFORCE, BernoulliStraightThrough, BinaryConcrete, Kumaraswamy
@@ -37,8 +38,8 @@ class InferenceNetwork(nn.Module):
         if self.dist in ["kuma", "hardkuma"]:
             self.kuma_a_key_layer = nn.Linear(encoding_size, hidden_size)
             self.kuma_a_query_layer = nn.Linear(encoding_size, hidden_size)
-            self.kuma_b_key_layer = nn.Linear(encoding_size, hidden_size)
-            self.kuma_b_query_layer = nn.Linear(encoding_size, hidden_size)
+            # self.kuma_b_key_layer = nn.Linear(encoding_size, hidden_size)
+            # self.kuma_b_query_layer = nn.Linear(encoding_size, hidden_size)
         else:
             self.key_layer = nn.Linear(encoding_size, hidden_size)
             self.query_layer = nn.Linear(encoding_size, hidden_size)
@@ -78,15 +79,19 @@ class InferenceNetwork(nn.Module):
             keys_a = self.kuma_a_key_layer(x_enc) # [B, T_x, hidden_size]
             queries_a = self.kuma_a_query_layer(y_enc) # [B, T_y, hidden_size]
             a = torch.bmm(queries_a, keys_a.transpose(1, 2)) # [B, T_y, T_x]
-            a = torch.clamp(F.softplus(a) + 0.7, 1e-5, 3.) # [B, T_y, T_x]
+            # a = torch.clamp(F.softplus(a) + 0.7, 1e-5, 3.) # [B, T_y, T_x]
+            # a = torch.tanh(a) + 1.1 # (0.1, 2.1)
+            a = 0.01 + (0.98 * torch.sigmoid(a))
 
             # Compute b using attention.
-            keys_b = self.kuma_b_key_layer(x_enc) # [b, t_x, hidden_size]
-            queries_b = self.kuma_b_query_layer(y_enc) # [b, t_y, hidden_size]
-            b = torch.bmm(queries_b, keys_b.transpose(1, 2)) # [B, T_y, T_x]
-            b = torch.clamp(F.softplus(b) + 0.7, 1e-5, 3.) # [B, T_y, T_x]
+            # keys_b = self.kuma_b_key_layer(x_enc) # [b, t_x, hidden_size]
+            # queries_b = self.kuma_b_query_layer(y_enc) # [b, t_y, hidden_size]
+            # b = torch.bmm(queries_b, keys_b.transpose(1, 2)) # [B, T_y, T_x]
+            # # b = torch.clamp(F.softplus(b) + 0.7, 1e-5, 3.) # [B, T_y, T_x]
+            # b = torch.tanh(b) + 1.1 # (0.1, 2.1)
 
-            q = Kumaraswamy(a, b)
+            # q = Kumaraswamy(a, b)
+            q = Kumaraswamy(a, 1.0 - a)
             if self.dist == "kuma":
                 return q
             else:
@@ -97,7 +102,7 @@ class InferenceNetwork(nn.Module):
 class AlignmentVAE(nn.Module):
 
     def __init__(self, dist, prior_params, src_vocab_size, tgt_vocab_size, emb_size, hidden_size,
-                 pad_idx, pooling, bidirectional, num_layers, cell_type):
+                 pad_idx, pooling, bidirectional, num_layers, cell_type, max_sentence_length):
         super().__init__()
         self.src_vocab_size = src_vocab_size
         self.tgt_vocab_size = tgt_vocab_size
@@ -123,6 +128,9 @@ class AlignmentVAE(nn.Module):
             # self.register_buffer("std_learning_signal", torch.Tensor([1.]))
             self.alpha = 0.05
 
+        if dist == "hardkuma":
+                self._create_hardkuma_prior_table(prior_params[0], max_sentence_length)
+
     def prior(self, seq_mask_x, seq_len_x, seq_mask_y):
         """
             Prior 1 / src_length.
@@ -147,12 +155,66 @@ class AlignmentVAE(nn.Module):
         elif self.dist == "concrete":
             return BinaryConcrete(temperature=probs.new([1.0]), logits=torch.zeros_like(probs)) # TODO
         elif self.dist in ["kuma", "hardkuma"]:
-            p = Kumaraswamy(seq_mask_x.float().new_full(prior_shape, fill_value=prior_param_1),
-                            seq_mask_x.float().new_full(prior_shape, fill_value=prior_param_2))
+
+            if prior_param_1 > 0 and prior_param_2 > 0:
+                p = Kumaraswamy(seq_mask_x.float().new_full(prior_shape, fill_value=prior_param_1),
+                                seq_mask_x.float().new_full(prior_shape, fill_value=prior_param_2))
+            elif self.dist == "hardkuma" and prior_param_1 > 0:
+                seq_len_numpy = seq_len_x.cpu().numpy()
+                a = seq_len_x.float().new_tensor([self.hardkuma_prior_table[length][0] for length in seq_len_numpy]) # [B]
+                a = a.unsqueeze(-1).unsqueeze(-1).repeat(1, seq_mask_y.size(1), seq_mask_x.size(1))
+                b = torch.ones_like(a)
+                p = Kumaraswamy(a, b)
+            else:
+                raise Exception(f"Invalid Kumaraswamy parameters a={prior_param_1}, b={prior_param_2}")
+
             if self.dist == "kuma":
                 return p
             else:
                 return StretchedAndRectifiedDistribution(p, -0.1, 1.1)
+
+    def _create_hardkuma_prior_table(self, prior_param_1, max_sentence_length, l=-0.1, r=1.1, N=10000):
+        """
+        Creates a prior table for the HardKuma. Fixes b=1.0
+        """
+        kuma_priors = []
+        l = torch.Tensor([l])
+        r = torch.Tensor([r])
+
+        # Create a list of (a, 1.0, CDF(0))
+        with torch.no_grad():
+            b = torch.Tensor([1.0])
+            for a in torch.linspace(start=epsilon, end=1., steps=N):
+                pk = Kumaraswamy(a, b)
+
+                # Compute the position of 0 in the stretched distribution.
+                k0 = -l / (r - l)
+                kuma_priors.append((a.item(), b.item(), pk.cdf(k0).item()))
+        kuma_priors = sorted(kuma_priors, key=lambda elem: elem[0])
+
+        # Tabulate priors for every possible sentence length.
+        # P(0) = 1 - (prior_param_1 / (l+1))
+        self.hardkuma_prior_table = {}
+        for length in range(1, max_sentence_length+1):
+            p0 = 1.0 - min(((1.0 + epsilon) / (length + 1.0)), 1.0 - epsilon)
+            idx = 0
+            cdf0 = float("inf")
+            while cdf0 > p0 and idx != len(kuma_priors):
+                a, b, cdf0 = kuma_priors[idx]
+                idx += 1
+            self.hardkuma_prior_table[length] = (a, b)
+
+    # def _get_hardkuma_prior_a(self, p0):
+    #     """
+    #     Returns the HardKuma a parameter that assigns approximately p0 probability to 0
+    #     if b = 1.0.
+    #     """
+    #     idx = 0
+    #     cdf0 = float("inf")
+    #     while cdf0 > p0 and idx != len(self.kuma_priors):
+    #         a, b, cdf0 = self.kuma_priors[idx]
+    #         idx += 1
+    #     return a
 
     def approximate_posterior(self, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y):
         return self.inf_network(x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y)
@@ -185,7 +247,7 @@ class AlignmentVAE(nn.Module):
         # self.std_learning_signal = self.alpha * new_learning_signal.std() \
         #                            + (1.0 - self.alpha) * self.std_learning_signal
 
-    def loss(self, logits, y, A, seq_mask_x, seq_mask_y, pa, qa, reduction="mean"):
+    def loss(self, logits, y, A, seq_mask_x, seq_mask_y, pa, qa, KL_multiplier=1.0, reduction="mean"):
         """
         :param pa: prior distribution.
         :param qa: distribution used to sample a.
@@ -204,8 +266,6 @@ class AlignmentVAE(nn.Module):
         KL = torchdist.kl.kl_divergence(qa, pa)
 
         # Mask out padding positions.
-        # KL = KL * seq_mask_x.unsqueeze(-1).transpose(1, 2).type_as(KL) # [B, T_y, T_x] * [B, 1, T_x]
-        # KL = KL * seq_mask_y.unsqueeze(-1).type_as(KL)
         KL = torch.where(seq_mask_x.unsqueeze(-1).transpose(1, 2), KL, KL.new([0.]))
         KL = torch.where(seq_mask_y.unsqueeze(-1), KL, KL.new([0.]))
 
@@ -214,8 +274,8 @@ class AlignmentVAE(nn.Module):
         output_dict["KL"] = KL
 
         # The loss is the negative ELBO, where ELBO = E_qa[log P(y|x, a)] - KL(qa||pa)
-        loss = neg_log_py_xa.sum(dim=-1) + KL
-        output_dict["ELBO"] = -loss
+        loss = neg_log_py_xa.sum(dim=-1) + KL_multiplier * KL
+        output_dict["ELBO"] = -loss + KL_multiplier * KL - KL
 
         # For REINFORCE, compute a surrogate term for the REINFORCE estimator for d/d lambda.
         if self.dist == "bernoulli-RF":

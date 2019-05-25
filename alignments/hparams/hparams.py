@@ -67,6 +67,8 @@ options = {
     "evaluate_every": (int, -1, False, "The number of batches after which to run"
                                        " evaluation. If <= 0, evaluation will happen"
                                        " after every epoch.", 2),
+    "KL_annealing_steps": (int, -1, False, "The number of steps to anneal the KL multiplier over,"
+                                           " which goes from 0 to 1.", 2),
 }
 
 class Hyperparameters:
