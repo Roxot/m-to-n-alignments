@@ -41,6 +41,7 @@ options = {
     "pooling": (str, "avg", False, "Pooling to use: avg|sum", 1),
     "prior_param_1": (float, 0., False, "Prior parameter 1", 1),
     "prior_param_2": (float, 0., False, "Prior parameter 2", 1),
+    "baselines": (str, "mean", False, "Baselines to use for the bernoulli-RF model, options: mean", 1),
 
     # Optimization hyperparameters
     "num_epochs": (int, 1, False, "The number of epochs to train the model for.", 2),

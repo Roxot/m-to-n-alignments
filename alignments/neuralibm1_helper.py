@@ -16,7 +16,8 @@ def create_model(hparams, vocab_src, vocab_tgt):
 
     return model
 
-def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparams, step):
+def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparams, step,
+               summary_dict, summary_writer=None):
     py_given_x = model(x, seq_mask_x, seq_len_x, y)
     loss = model.loss(py_given_x, y, reduction="mean")
     return loss

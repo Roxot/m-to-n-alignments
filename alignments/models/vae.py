@@ -286,22 +286,22 @@ class AlignmentVAE(nn.Module):
             log_qa_sample = qa.log_prob(A).sum(dim=-1) # [B, T_y]
             loss = loss - (normalized_learning_signal * log_qa_sample).sum(dim=-1) # [B]
 
+            output_dict["learning_signal"] = learning_signal.mean(dim=-1)
+            output_dict["normalized_learning_signal"] = normalized_learning_signal.mean(dim=-1)
+
             # Update the baselines.
             seq_len_y = seq_mask_y.sum(dim=-1).type_as(learning_signal)
             mean_baseline = learning_signal.sum(dim=-1) / seq_len_y # [B]
             self._update_baselines(mean_baseline)
 
-            output_dict["learning_signal"] = mean_baseline
-        output_dict["loss"] = loss
-
         # Do sum over the time dimension if reduction is none.
         if reduction == "mean":
-            for k, v in output_dict.items():
-                output_dict[k] = v.mean()
+            output_dict["loss"] = loss.mean()
         elif reduction == "sum":
-            for k, v in output_dict.items():
-                output_dict[k] = v.sum()
-        elif reduction != "none":
+            output_dict["loss"] = loss.sum()
+        elif reduction == "none":
+            output_dict["loss"] = loss
+        else:
             raise Exception(f"Unknown reduction option {reduction}")
 
         return output_dict

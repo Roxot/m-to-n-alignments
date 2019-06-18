@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import time
+import numpy as np
 
 import alignments.neuralibm1_helper as neuralibm1_helper
 import alignments.alignmentvae_helper as alignmentvae_helper
@@ -8,6 +9,7 @@ import alignments.alignmentvae_helper as alignmentvae_helper
 from pathlib import Path
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
+from collections import defaultdict
 
 from alignments.data import ParallelDataset, PAD_TOKEN, create_batch, BucketingParallelDataLoader
 from alignments.hparams import Hyperparameters
@@ -35,7 +37,10 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
     :param train_step: function that performs a single training step and returns
                        training loss. Takes as inputs: model, x,
                        seq_mask_x, seq_len_x, y, seq_mask_y,
-                       seq_len_y, hparams, step.
+                       seq_len_y, hparams, step, summary_dict, summary_writer.
+                       When summary_writer is given training summaries can be
+                       written / printed, the summary_dict can be used to keep
+                       track of summary statistics (type = defaultdict(0.)).
     :param validate: function that performs validation and returns validation
                      AER, used for model selection. Takes as inputs: model,
                      val_data, val_alignments vocab, device, hparams, step, summary_writer.
@@ -67,6 +72,9 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
     step = 0
     epoch_num = 1
     evaluations_no_improvement = 0
+    train_summary_dict = defaultdict(lambda: 0.)
+    num_inf_params = model_parameter_count(model, tag="inf_network")
+    num_gen_params = model_parameter_count(model) - num_inf_params
 
     # Define the evaluation function.
     def run_evaluation():
@@ -109,15 +117,13 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
                                                     include_null=include_null)
             y, seq_mask_y, seq_len_y = create_batch(sentences_y,
                                                     vocab_tgt, device)
+            train_sw = summary_writer if (step % hparams.print_every == 0 and step > 0) else None
             loss = train_step(model, x, seq_mask_x, seq_len_x,
-                              y, seq_mask_y, seq_len_y, hparams, step)
+                              y, seq_mask_y, seq_len_y, hparams, step,
+                              train_summary_dict, summary_writer=train_sw)
 
-            # Backpropagate and update gradients.
+            # Backpropagate.
             loss.backward()
-            if hparams.max_gradient_norm > 0:
-                nn.utils.clip_grad_norm_(model.parameters(),
-                                         hparams.max_gradient_norm)
-            optimizer.step()
 
             # Update statistics.
             num_tokens += (seq_len_x.sum() + seq_len_y.sum()).item()
@@ -128,17 +134,38 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
             if step % hparams.print_every == 0:
                 elapsed = time.time() - tokens_start
                 tokens_per_sec = num_tokens / elapsed if step != 0 else 0
+
+                # Compute some gradient statistics.
                 grad_norm = gradient_norm(model)
+                inf_grad_norm = gradient_norm(model, "inf_network")
+                gen_grad_norm = np.sqrt((grad_norm ** 2) - (inf_grad_norm ** 2))
+                avg_inf_grad_norm = inf_grad_norm / num_inf_params
+                avg_gen_grad_norm = gen_grad_norm / num_gen_params
+
                 print(f"({epoch_num}) step {step}: "
                        f"training loss = {total_train_loss/num_sentences:,.2f} -- "
                        f"{tokens_per_sec:,.0f} tokens/s -- "
-                       f"gradient norm = {grad_norm:.2f}")
-                summary_writer.add_scalar("train/loss",
-                                          total_train_loss/num_sentences, step)
+                       f"gradient norm (unclipped) = {grad_norm:.2f}")
+
+                # Don't add a summary for the first step.
+                if step > 0:
+                    summary_writer.add_scalar("train/loss",
+                                              total_train_loss/num_sentences, step)
+                    summary_writer.add_scalar("train/unclipped_grad_norm", grad_norm, step)
+                    summary_writer.add_scalar("train/avg_inf_grad_norm", avg_inf_grad_norm, step)
+                    summary_writer.add_scalar("train/avg_gen_grad_norm", avg_gen_grad_norm, step)
+
+                # Reset statistics.
                 num_tokens = 0
                 tokens_start = time.time()
                 total_train_loss = 0.
                 num_sentences = 0
+
+            # Clip the gradients and take a gradient step.
+            if hparams.max_gradient_norm > 0:
+                nn.utils.clip_grad_norm_(model.parameters(),
+                                         hparams.max_gradient_norm)
+            optimizer.step()
 
             # Zero the gradient buffer.
             optimizer.zero_grad()
@@ -167,6 +194,15 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
     model.eval()
     validate(model, val_data, val_alignments, vocab_src, vocab_tgt, device, hparams, step,
              summary_writer=None)
+
+def summarize_params(model, summary_writer, step):
+    for name, param in model.named_parameters():
+        summary_writer.add_histogram(f"train/grad_norm/{name}",
+                                     param.grad.norm(2).item(), step)
+        summary_writer.add_scalar(f"train/grad_mean/{name}",
+                                  param.grad.mean(dim=0).mean(), step)
+        summary_writer.add_scalar(f"train/grad_variance/{name}",
+                                  param.grad.var(dim=0).mean(), step)
 
 def main(hparams):
 

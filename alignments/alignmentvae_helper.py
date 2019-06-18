@@ -20,7 +20,8 @@ def create_model(hparams, vocab_src, vocab_tgt):
                         cell_type=hparams.cell_type,
                         max_sentence_length=hparams.max_sentence_length)
 
-def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparams, step):
+def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparams, step,
+               summary_dict, summary_writer=None):
     qa = model.approximate_posterior(x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y)
     pa = model.prior(seq_mask_x, seq_len_x, seq_mask_y)
     A = qa.rsample()
@@ -34,6 +35,32 @@ def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparam
     output_dict = model.loss(logits=logits, y=y, A=A, seq_mask_x=seq_mask_x,
                              seq_mask_y=seq_mask_y, pa=pa, qa=qa,
                              KL_multiplier=KL_multiplier, reduction="mean")
+
+    # Keep track of training summary statistics.
+    summary_dict["num_sentences"] += x.size(0)
+    summary_dict["KL"] += output_dict["KL"].sum().item()
+    summary_dict["ELBO"] += output_dict["ELBO"].sum().item()
+    summary_dict["reward"] += output_dict["learning_signal"].sum().item()
+    summary_dict["normalized_reward"] += output_dict["normalized_learning_signal"].sum().item()
+    summary_dict["reward_var"] += output_dict["learning_signal"].var()
+    summary_dict["normalized_reward_var"] += output_dict["normalized_learning_signal"].var()
+
+    # Summarize if the summary writer is given.
+    if summary_writer is not None:
+        summary_writer.add_scalar("train/KL", summary_dict["KL"] / summary_dict["num_sentences"], step)
+        summary_writer.add_scalar("train/ELBO", summary_dict["ELBO"] / summary_dict["num_sentences"], step)
+        summary_writer.add_scalar("train/reward", summary_dict["reward"] / summary_dict["num_sentences"], step)
+        summary_writer.add_scalar("train/reward_var", summary_dict["reward_var"] /\
+                summary_dict["num_sentences"], step)
+        summary_writer.add_scalar("train/normalized_reward", summary_dict["normalized_reward"] /\
+                summary_dict["num_sentences"], step)
+        summary_writer.add_scalar("train/normalized_reward_var", summary_dict["normalized_reward_var"] /\
+                summary_dict["num_sentences"], step)
+        summary_writer.add_scalar("train/reward_mean_ma", model.avg_learning_signal, step)
+        summary_writer.add_histogram("train/p(A)", pa.probs, step)
+        summary_writer.add_histogram("train/q(A|x,y)", qa.probs, step)
+        summary_writer.add_histogram("train/sampled_A", A, step)
+
     return output_dict["loss"]
 
 def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
@@ -86,9 +113,9 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
             logits = model(x, qa.sample())
             pa = model.prior(seq_mask_x, seq_len_x, seq_mask_y)
             output_dict = model.loss(logits=logits, y=y, A=A, seq_mask_x=seq_mask_x,
-                                     seq_mask_y=seq_mask_y, pa=pa, qa=qa, reduction="mean")
-            total_ELBO += output_dict["ELBO"].item()
-            total_KL += output_dict["KL"].item()
+                                     seq_mask_y=seq_mask_y, pa=pa, qa=qa)
+            total_ELBO += output_dict["ELBO"].sum().item()
+            total_KL += output_dict["KL"].sum().item()
             num_sentences += x.size(0)
 
             # Compute statistics for validation accuracy.

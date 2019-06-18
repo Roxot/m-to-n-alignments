@@ -61,42 +61,6 @@ def load_vocabularies(hparams):
 
     return vocab_src, vocab_tgt
 
-# def create_decoder(attention, hparams):
-#     init_from_encoder_final = (hparams.model_type == "cond_nmt")
-#     if hparams.decoder_style == "bahdanau":
-#         return BahdanauDecoder(emb_size=hparams.emb_size,
-#                                hidden_size=hparams.hidden_size,
-#                                attention=attention,
-#                                dropout=hparams.dropout,
-#                                num_layers=hparams.num_dec_layers,
-#                                cell_type=hparams.cell_type,
-#                                init_from_encoder_final=init_from_encoder_final)
-#     elif hparams.decoder_style == "luong":
-#         return LuongDecoder(emb_size=hparams.emb_size,
-#                             hidden_size=hparams.hidden_size,
-#                             attention=attention,
-#                             dropout=hparams.dropout,
-#                             num_layers=hparams.num_dec_layers,
-#                             cell_type=hparams.cell_type,
-#                             init_from_encoder_final=init_from_encoder_final)
-#     else:
-#         raise Exception(f"Unknown decoder style: {hparams.decoder_style}")
-
-# def create_attention(hparams):
-#     if not hparams.attention in ["luong", "scaled_luong", "bahdanau"]:
-#         raise Exception(f"Unknown attention option: {hparams.attention}")
-
-#     key_size = hparams.hidden_size * 2 if hparams.bidirectional else hparams.hidden_size
-#     query_size = hparams.hidden_size
-
-#     if "luong" in hparams.attention:
-#         scale = True if hparams.attention == "scaled_luong" else False
-#         attention = LuongAttention(key_size, hparams.hidden_size, scale=scale)
-#     else:
-#         attention = BahdanauAttention(key_size, query_size, hparams.hidden_size)
-
-#     return attention
-
 def create_optimizer(parameters, hparams):
     optimizer = optim.Adam(parameters, lr=hparams.learning_rate)
 
@@ -112,57 +76,21 @@ def create_optimizer(parameters, hparams):
                                                         min_lr=hparams.min_lr)
     return optimizer, lr_scheduler
 
-def model_parameter_count(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+def model_parameter_count(model, tag=None):
+    return sum(p.numel() for name, p in model.named_parameters() if (p.requires_grad and (tag is None or tag in name)))
 
-def gradient_norm(model):
+def gradient_norm(model, tag=None):
     total_norm = 0.
-    for p in model.parameters():
+    for name, p in model.named_parameters():
+        if tag is not None and tag not in name:
+            continue
+
         if p.grad is None:
             print(f"WARNING: p.grad is None for parameter with size {p.size()}")
             continue
+
         param_norm = p.grad.data.norm(2)
         total_norm += param_norm.item() ** 2
+
     total_norm = np.sqrt(total_norm)
     return total_norm
-
-# def attention_summary(row_labels, col_labels, att_weights, summary_writer, summary_name,
-#                       global_step):
-#     """
-#     :param x: [B, T_src] source word tokens (strings)
-#     :param y: [B, T_tgt] target word tokens (strings)
-#     :param att_weights: [T_tgt, T_src]
-#     """
-
-#     # Plot a heatmap for the scores.
-#     fig, ax = plt.subplots()
-#     plt.imshow(att_weights, cmap="Greys", aspect="equal",
-#                origin="upper", vmin=0., vmax=1.)
-
-#    # Configure the columns.
-#     ax.xaxis.tick_top()
-#     ax.set_xticks(np.arange(att_weights.shape[1]))
-#     ax.set_xticklabels(col_labels, rotation="vertical")
-
-#     # Configure the rows.
-#     ax.set_yticklabels(row_labels)
-#     ax.set_yticks(np.arange(att_weights.shape[0]))
-
-#     # Fit the figure neatly.
-#     plt.tight_layout()
-
-#     # Write the summary.
-#     summary_writer.add_figure(summary_name, fig, global_step=global_step)
-
-# def compute_bleu(hypotheses, references, subword_token=None):
-#     """
-#     Computes sacrebleu for a single set of references.
-#     """
-
-#     # Remove any subword tokens such as "@@".
-#     if subword_token is not None:
-#         references = remove_subword_tokens(references, subword_token)
-#         hypotheses = remove_subword_tokens(hypotheses, subword_token)
-
-#     # Compute the BLEU score.
-#     return sacrebleu.raw_corpus_bleu(hypotheses, [references]).score
