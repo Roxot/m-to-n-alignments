@@ -18,7 +18,10 @@ def create_model(hparams, vocab_src, vocab_tgt):
                         bidirectional=hparams.bidirectional,
                         num_layers=hparams.num_layers,
                         cell_type=hparams.cell_type,
-                        max_sentence_length=hparams.max_sentence_length)
+                        max_sentence_length=hparams.max_sentence_length,
+                        use_mean_cv=hparams.cv_running_avg,
+                        use_std_cv=hparams.cv_running_std,
+                        use_self_critic_cv=hparams.cv_self_critic)
 
 def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparams, step,
                summary_dict, summary_writer=None):
@@ -32,18 +35,24 @@ def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparam
     else:
         KL_multiplier = 1.0
 
-    output_dict = model.loss(logits=logits, y=y, A=A, seq_mask_x=seq_mask_x,
+    output_dict = model.loss(logits=logits, x=x, y=y, A=A, seq_mask_x=seq_mask_x,
                              seq_mask_y=seq_mask_y, pa=pa, qa=qa,
                              KL_multiplier=KL_multiplier, reduction="mean")
+    output_dict["A"] = A
+    output_dict["qa"] = qa
+    output_dict["pa"] = qa
+    output_dict["KL_multiplier"] = KL_multiplier
 
     # Keep track of training summary statistics.
     summary_dict["num_sentences"] += x.size(0)
     summary_dict["KL"] += output_dict["KL"].sum().item()
     summary_dict["ELBO"] += output_dict["ELBO"].sum().item()
-    summary_dict["reward"] += output_dict["learning_signal"].sum().item()
-    summary_dict["normalized_reward"] += output_dict["normalized_learning_signal"].sum().item()
-    summary_dict["reward_var"] += output_dict["learning_signal"].var()
-    summary_dict["normalized_reward_var"] += output_dict["normalized_learning_signal"].var()
+    summary_dict["reward"] += output_dict["reward"].sum().item()
+    summary_dict["normalized_reward"] += output_dict["normalized_reward"].sum().item()
+    summary_dict["reward_var"] += output_dict["reward"].var().item()
+    summary_dict["normalized_reward_var"] += output_dict["normalized_reward"].var().item()
+    if "reward_sc" in output_dict:
+        summary_dict["reward_sc"] += output_dict["reward_sc"].sum().item()
 
     # Summarize if the summary writer is given.
     if summary_writer is not None:
@@ -56,12 +65,16 @@ def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparam
                 summary_dict["num_sentences"], step)
         summary_writer.add_scalar("train/normalized_reward_var", summary_dict["normalized_reward_var"] /\
                 summary_dict["num_sentences"], step)
-        summary_writer.add_scalar("train/reward_mean_ma", model.avg_learning_signal, step)
+        summary_writer.add_scalar("train/reward_mean_ma", model.avg_reward, step)
+        summary_writer.add_scalar("train/reward_std_ma", model.std_reward, step)
         summary_writer.add_histogram("train/p(A)", pa.probs, step)
         summary_writer.add_histogram("train/q(A|x,y)", qa.probs, step)
         summary_writer.add_histogram("train/sampled_A", A, step)
+        if "reward_sc" in output_dict:
+            summary_writer.add_scalar("train/reward_self_critic", summary_dict["reward_sc"] /\
+                    summary_dict["num_sentences"], step)
 
-    return output_dict["loss"]
+    return output_dict
 
 def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
              hparams, step, summary_writer=None):
@@ -72,7 +85,6 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
     val_dl = DataLoader(val_data, shuffle=False, batch_size=hparams.batch_size,
                         num_workers=4)
 
-    # TODO log % 0s and 1s
     total_correct_predictions = 0
     total_predictions = 0.
     num_sentences = 0
@@ -112,7 +124,7 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
             # Compute validation ELBO and KL.
             logits = model(x, qa.sample())
             pa = model.prior(seq_mask_x, seq_len_x, seq_mask_y)
-            output_dict = model.loss(logits=logits, y=y, A=A, seq_mask_x=seq_mask_x,
+            output_dict = model.loss(logits=logits, x=x, y=y, A=A, seq_mask_x=seq_mask_x,
                                      seq_mask_y=seq_mask_y, pa=pa, qa=qa)
             total_ELBO += output_dict["ELBO"].sum().item()
             total_KL += output_dict["KL"].sum().item()

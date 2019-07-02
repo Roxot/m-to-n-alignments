@@ -118,9 +118,10 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
             y, seq_mask_y, seq_len_y = create_batch(sentences_y,
                                                     vocab_tgt, device)
             train_sw = summary_writer if (step % hparams.print_every == 0 and step > 0) else None
-            loss = train_step(model, x, seq_mask_x, seq_len_x,
+            train_output = train_step(model, x, seq_mask_x, seq_len_x,
                               y, seq_mask_y, seq_len_y, hparams, step,
                               train_summary_dict, summary_writer=train_sw)
+            loss = train_output["loss"]
 
             # Backpropagate.
             loss.backward()
@@ -169,6 +170,43 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
 
             # Zero the gradient buffer.
             optimizer.zero_grad()
+
+            # Do aditional updates of the inference network using PPO.
+            if hparams.model_type == "bernoulli-RF" and hparams.PPO_steps > 0:
+                A = train_output["A"]
+                pa = train_output["pa"]
+                KL_multiplier = train_output["KL_multiplier"]
+                qa = train_output["qa"]
+                log_py_xa = train_output["log_py_xa"]
+                reward = train_output["normalized_reward"] if \
+                        (hparams.PPO_reuse_sc or not hparams.cv_self_critic) else None
+                for _ in range(hparams.PPO_steps):
+                    ppo_output = model.ppo_loss(x, seq_mask_x, seq_len_x, y, seq_mask_y,
+                                                seq_len_y, A=A, pa=pa, qa_init=qa,
+                                                log_py_xa=log_py_xa, eps=hparams.PPO_eps,
+                                                KL_multiplier=KL_multiplier, reward=reward)
+                    if hparams.max_gradient_norm > 0:
+                        nn.utils.clip_grad_norm_(model.parameters(),
+                                                 hparams.max_gradient_norm)
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+            if hparams.model_type == "bernoulli-RF":
+
+                # Select the right dictionary.
+                if hparams.PPO_steps > 0:
+                    out_dict = ppo_output
+                else:
+                    out_dict = train_output
+
+                # Select the right reward.
+                if "reward_sc" in out_dict:
+                    reward = out_dict["reward_sc"]
+                else:
+                    reward = out_dict["reward"]
+
+                # Update the running average baselines.
+                model.update_baselines(reward, seq_len_y)
 
             # Run evaluation every evaluate_every steps if set.
             if hparams.evaluate_every > 0 and step > 0 and step % hparams.evaluate_every == 0:

@@ -102,7 +102,8 @@ class InferenceNetwork(nn.Module):
 class AlignmentVAE(nn.Module):
 
     def __init__(self, dist, prior_params, src_vocab_size, tgt_vocab_size, emb_size, hidden_size,
-                 pad_idx, pooling, bidirectional, num_layers, cell_type, max_sentence_length):
+                 pad_idx, pooling, bidirectional, num_layers, cell_type, max_sentence_length,
+                 use_mean_cv=False, use_std_cv=False, use_self_critic_cv=False):
         super().__init__()
         self.src_vocab_size = src_vocab_size
         self.tgt_vocab_size = tgt_vocab_size
@@ -124,9 +125,12 @@ class AlignmentVAE(nn.Module):
                                             cell_type=cell_type)
 
         if dist == "bernoulli-RF":
-            self.register_buffer("avg_learning_signal", torch.Tensor([0.]))
-            # self.register_buffer("std_learning_signal", torch.Tensor([1.]))
+            self.register_buffer("avg_reward", torch.Tensor([0.]))
+            self.register_buffer("std_reward", torch.Tensor([1.]))
             self.alpha = 0.05
+            self.use_mean_cv = use_mean_cv
+            self.use_std_cv = use_std_cv
+            self.use_self_critic_cv = use_self_critic_cv
 
         if dist == "hardkuma":
                 self._create_hardkuma_prior_table(prior_params[0], max_sentence_length)
@@ -240,14 +244,25 @@ class AlignmentVAE(nn.Module):
         logits = self.categorical_layer(pooled_x)
         return logits
 
-    def _update_baselines(self, new_learning_signal): # [B]
-        new_learning_signal = new_learning_signal.detach()
-        self.avg_learning_signal = self.alpha * new_learning_signal.mean() \
-                                   + (1.0 - self.alpha) * self.avg_learning_signal
-        # self.std_learning_signal = self.alpha * new_learning_signal.std() \
-        #                            + (1.0 - self.alpha) * self.std_learning_signal
+    def cv_self_critic(self, x, y, qa):
+        # TODO check with no_gradient if faster
+        A_argmax = qa.mean.round()
+        logits = self.forward(x, A_argmax)
+        logits = logits.permute(0, 2, 1)
+        self_critic_score = -F.cross_entropy(logits, y, ignore_index=self.pad_idx,
+                                             reduction="none") # [B, T_y]
+        return self_critic_score.detach()
 
-    def loss(self, logits, y, A, seq_mask_x, seq_mask_y, pa, qa, KL_multiplier=1.0, reduction="mean"):
+    def update_baselines(self, new_reward, seq_len_y): # [B, T_y], [B]
+        seq_len_y = seq_len_y.type_as(new_reward)
+        new_reward = new_reward.sum(dim=-1) / seq_len_y # [B]
+        new_reward = new_reward.detach()
+        self.avg_reward = self.alpha * new_reward.mean() \
+                                   + (1.0 - self.alpha) * self.avg_reward
+        self.std_reward = self.alpha * new_reward.std() \
+                                   + (1.0 - self.alpha) * self.std_reward
+
+    def loss(self, logits, x, y, A, seq_mask_x, seq_mask_y, pa, qa, KL_multiplier=1.0, reduction="mean"):
         """
         :param pa: prior distribution.
         :param qa: distribution used to sample a.
@@ -261,6 +276,7 @@ class AlignmentVAE(nn.Module):
         neg_log_py_xa = F.cross_entropy(logits, y, ignore_index=self.pad_idx,
                                         reduction="none") # [B, T_y]
         # neg_log_py_xa = neg_log_py_xa.sum(dim=1) # [B]
+        output_dict["log_py_xa"] = -neg_log_py_xa
 
         # Compute the KL between the prior and the posterior distributions.
         KL = torchdist.kl.kl_divergence(qa, pa)
@@ -279,20 +295,25 @@ class AlignmentVAE(nn.Module):
 
         # For REINFORCE, compute a surrogate term for the REINFORCE estimator for d/d lambda.
         if self.dist == "bernoulli-RF":
-            learning_signal = -neg_log_py_xa.detach() # [B, T_y]
-            normalized_learning_signal = (learning_signal - self.avg_learning_signal.unsqueeze(-1))
-            #                             / self.std_learning_signal.unsqueeze(-1)
-            #  std > 0
+            reward = -neg_log_py_xa.detach() # [B, T_y]
+
+            normalized_reward = reward
+            if self.use_self_critic_cv:
+                self_critic_score = self.cv_self_critic(x, y, qa)
+                normalized_reward = normalized_reward - self_critic_score
+                output_dict["reward_sc"] = normalized_reward
+            if self.use_mean_cv:
+                normalized_reward = normalized_reward - \
+                        self.avg_reward
+            if self.use_std_cv:
+                normalized_reward = normalized_reward /\
+                         self.std_reward.clamp(min=1.0)
+
             log_qa_sample = qa.log_prob(A).sum(dim=-1) # [B, T_y]
-            loss = loss - (normalized_learning_signal * log_qa_sample).sum(dim=-1) # [B]
+            loss = loss - (normalized_reward * log_qa_sample).sum(dim=-1) # [B]
 
-            output_dict["learning_signal"] = learning_signal.mean(dim=-1)
-            output_dict["normalized_learning_signal"] = normalized_learning_signal.mean(dim=-1)
-
-            # Update the baselines.
-            seq_len_y = seq_mask_y.sum(dim=-1).type_as(learning_signal)
-            mean_baseline = learning_signal.sum(dim=-1) / seq_len_y # [B]
-            self._update_baselines(mean_baseline)
+            output_dict["reward"] = reward
+            output_dict["normalized_reward"] = normalized_reward
 
         # Do sum over the time dimension if reduction is none.
         if reduction == "mean":
@@ -304,4 +325,47 @@ class AlignmentVAE(nn.Module):
         else:
             raise Exception(f"Unknown reduction option {reduction}")
 
+        return output_dict
+
+    def ppo_loss(self, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, A, pa, qa_init,
+                 log_py_xa, eps, KL_multiplier=1., reward=None):
+        output_dict = {}
+
+        # Compute the ratio for IS and clip it.
+        log_qa_init = qa_init.log_prob(A).sum(dim=-1)
+        qa_new = self.approximate_posterior(x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y)
+        log_qa_new = qa_new.log_prob(A).sum(dim=-1) # [B, T_y]
+        ratio = torch.exp(log_qa_new - log_qa_init.detach())
+        ratio_c = ratio.clamp(min=1.0-eps, max=1.0+eps)
+
+        # p(y|x,a) does not change as we do not update theta, and a is the same. So usually
+        # the reward would not change after an update to q(a|x, y) alone. However, the
+        # input-dependent baseline (the self-critic) will change depending on q(a|x, y).
+        # Thus, we do update it, unless reward is given (for computational efficiency reasons).
+        if reward is None:
+            reward = log_py_xa.detach()
+            if self.use_self_critic_cv:
+                self_critic_score = self.cv_self_critic(x, y, qa_new)
+                reward = reward - self_critic_score
+                output_dict["reward_sc"] = reward
+            if self.use_mean_cv:
+                reward = reward - self.avg_reward
+            if self.use_std_cv:
+                reward = reward / self.std_reward.clamp(min=1.0)
+
+        # Compute the KL between the prior and the posterior distributions.
+        KL = torchdist.kl.kl_divergence(qa_new, pa)
+
+        # Mask out padding positions.
+        KL = torch.where(seq_mask_x.unsqueeze(-1).transpose(1, 2), KL, KL.new([0.]))
+        KL = torch.where(seq_mask_y.unsqueeze(-1), KL, KL.new([0.]))
+
+        # Sum for all independent latent alignment variables.
+        KL = KL.sum(dim=-1).sum(dim=-1) # [B]
+
+        # Compute the surrogate loss.
+        ppo_loss = torch.max(-reward * ratio, -reward * ratio_c).mean() + KL * KL_multiplier
+
+        output_dict["loss"] = ppo_loss
+        output_dict["reward"] = reward
         return output_dict

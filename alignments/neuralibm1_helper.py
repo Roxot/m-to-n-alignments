@@ -20,7 +20,7 @@ def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparam
                summary_dict, summary_writer=None):
     py_given_x = model(x, seq_mask_x, seq_len_x, y)
     loss = model.loss(py_given_x, y, reduction="mean")
-    return loss
+    return {"loss": loss}
 
 def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
              hparams, step, summary_writer=None):

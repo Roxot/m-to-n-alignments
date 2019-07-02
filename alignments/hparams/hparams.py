@@ -41,7 +41,12 @@ options = {
     "pooling": (str, "avg", False, "Pooling to use: avg|sum", 1),
     "prior_param_1": (float, 0., False, "Prior parameter 1", 1),
     "prior_param_2": (float, 0., False, "Prior parameter 2", 1),
-    "baselines": (str, "mean", False, "Baselines to use for the bernoulli-RF model, options: mean", 1),
+    "cv_running_avg": (bool, True, False, "Center the reward", 1),
+    "cv_running_std": (bool, False, False, "Reward to unit variance", 1),
+    "cv_self_critic": (bool, False, False, "Use a self-critic to control variance", 1),
+    "PPO_steps": (int, 0, False, "Number of PPO steps after the first update.", 1),
+    "PPO_eps": (float, 0.2, False, "Epsilon used for clipping in PPO.", 1),
+    "PPO_reuse_sc": (bool, True, False, "Re-use the self-critic score for PPO updates.", 1),
 
     # Optimization hyperparameters
     "num_epochs": (int, 1, False, "The number of epochs to train the model for.", 2),
