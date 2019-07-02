@@ -51,7 +51,7 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
                 links = set()
                 for j, aj in enumerate(a[:seq_len], 1):
                     if aj > 0:
-                        links.add((aj, j))
+                        links.add((aj, j)) # TODO this only works for 1 direction now.
                 alignments.append(links)
 
     # Compute AER.
