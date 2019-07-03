@@ -138,10 +138,11 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
 
                 # Compute some gradient statistics.
                 grad_norm = gradient_norm(model)
-                inf_grad_norm = gradient_norm(model, "inf_network")
-                gen_grad_norm = np.sqrt((grad_norm ** 2) - (inf_grad_norm ** 2))
-                avg_inf_grad_norm = inf_grad_norm / num_inf_params
-                avg_gen_grad_norm = gen_grad_norm / num_gen_params
+                if num_inf_params > 0:
+                    inf_grad_norm = gradient_norm(model, "inf_network")
+                    gen_grad_norm = np.sqrt((grad_norm ** 2) - (inf_grad_norm ** 2))
+                    avg_inf_grad_norm = inf_grad_norm / num_inf_params
+                    avg_gen_grad_norm = gen_grad_norm / num_gen_params
 
                 print(f"({epoch_num}) step {step}: "
                        f"training loss = {total_train_loss/num_sentences:,.2f} -- "
@@ -153,8 +154,9 @@ def train(model, optimizer, lr_scheduler, train_data, val_data, val_alignments, 
                     summary_writer.add_scalar("train/loss",
                                               total_train_loss/num_sentences, step)
                     summary_writer.add_scalar("train/unclipped_grad_norm", grad_norm, step)
-                    summary_writer.add_scalar("train/avg_inf_grad_norm", avg_inf_grad_norm, step)
-                    summary_writer.add_scalar("train/avg_gen_grad_norm", avg_gen_grad_norm, step)
+                    if num_inf_params > 0:
+                        summary_writer.add_scalar("train/avg_inf_grad_norm", avg_inf_grad_norm, step)
+                        summary_writer.add_scalar("train/avg_gen_grad_norm", avg_gen_grad_norm, step)
 
                 # Reset statistics.
                 num_tokens = 0

@@ -27,6 +27,7 @@ options = {
     "vocab_min_freq": (int, 0, False, "The minimum frequency of a word for it"
                                       " to be included in the vocabulary.", 0),
     "model_checkpoint": (str, None, False, "A model checkpoint to load.", 0),
+    "example_sentence_idx": (int, 0, False, "Example alignment to print and plot", 0),
 
     # Model hyperparameters
     "model_type": (str, "neuralibm1", False, "The type of model to train:"

@@ -94,3 +94,37 @@ def gradient_norm(model, tag=None):
 
     total_norm = np.sqrt(total_norm)
     return total_norm
+
+def alignment_summary(src_labels, tgt_labels, alignment_links, summary_writer, summary_name,
+                      global_step):
+    """
+    :param src_labels: list of T_src source word tokens (strings)
+    :param tgt_labels: list of T_tgt target word tokens (strings)
+    :param alignment_links: list of 1-indexed alignments links as (src_pos, tgt_pos)
+    """
+
+    # Create a matrix of alignments
+    A = np.zeros([len(src_labels), len(tgt_labels)])
+    for link in alignment_links:
+        src_pos, tgt_pos = link
+        A[src_pos-1, tgt_pos-1] = 1.
+
+    # Plot a heatmap for the scores.
+    fig, ax = plt.subplots()
+    plt.imshow(A, cmap="Greys", aspect="equal",
+               origin="upper", vmin=0., vmax=1.)
+
+   # Configure the columns.
+    ax.xaxis.tick_top()
+    ax.set_xticks(np.arange(A.shape[1]))
+    ax.set_xticklabels(tgt_labels, rotation="vertical")
+
+    # Configure the rows.
+    ax.set_yticklabels(src_labels)
+    ax.set_yticks(np.arange(A.shape[0]))
+
+    # Fit the figure neatly.
+    plt.tight_layout()
+
+    # Write the summary.
+    summary_writer.add_figure(summary_name, fig, global_step=global_step)

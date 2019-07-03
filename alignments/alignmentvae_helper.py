@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from alignments.aer import AERSufficientStatistics
 from alignments.models import AlignmentVAE
 from alignments.data import PAD_TOKEN, create_batch
+from alignments.train_utils import alignment_summary
 
 def create_model(hparams, vocab_src, vocab_tgt):
     return AlignmentVAE(dist=hparams.model_type,
@@ -161,5 +162,20 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
     # Print validation results.
     print(f"validation accuracy = {val_accuracy:.2f} -- validation AER = {val_aer:.2f}"
           f" -- validation ELBO = {val_ELBO:,.2f} -- validation KL = {val_KL:,.2f}")
+
+    # Print / plot a sample alignment.
+    sen_idx = hparams.example_sentence_idx
+    sen_x, sen_y = val_data[sen_idx]
+    sen_a = list(sorted(alignments[sen_idx], key=lambda link: link[1]))
+    tokens_x = sen_x.split()
+    tokens_y = sen_y.split()
+    print(f"Source sentence: {sen_x}\nTarget sentence: {sen_y}")
+    if len(sen_a) == 0:
+        print(" - no alignments")
+    else:
+        for link in sen_a:
+            print(f" - {tokens_y[link[1]-1]} is aligned to {tokens_x[link[0]-1]}")
+    if summary_writer is not None:
+        alignment_summary(tokens_x, tokens_y, sen_a, summary_writer, "validation/alignment", step)
 
     return val_aer

@@ -3,6 +3,7 @@ import numpy as np
 
 from torch.utils.data import DataLoader
 
+from alignments.train_utils import alignment_summary
 from alignments.aer import AERSufficientStatistics
 from alignments.data import PAD_TOKEN, create_batch
 from alignments.models import NeuralIBM1
@@ -33,11 +34,12 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
     num_sentences = 0
     num_predictions = 0
     total_NLL = 0.
+    total_correct_predictions = 0
     alignments = []
     with torch.no_grad():
         for sen_x, sen_y in val_dl:
             x, seq_mask_x, seq_len_x = create_batch(sen_x, vocab_src, device, include_null=True)
-            y, _, seq_len_y = create_batch(sen_y, vocab_tgt, device)
+            y, seq_mask_y, seq_len_y = create_batch(sen_y, vocab_tgt, device)
 
             py_given_x = model(x, seq_mask_x, seq_len_x, y)
             batch_NLL = model.loss(py_given_x, y, reduction="sum")
@@ -54,11 +56,19 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
                         links.add((aj, j)) # TODO this only works for 1 direction now.
                 alignments.append(links)
 
+            # Statistics for accuracy tracking.
+            predictions = torch.argmax(py_given_x, dim=-1, keepdim=False)
+            correct_predictions = (predictions == y) * seq_mask_y
+            total_correct_predictions += correct_predictions.sum().item()
+
     # Compute AER.
     metric = AERSufficientStatistics()
     for a, gold_a in zip(alignments, gold_alignments):
         metric.update(sure=gold_a[0], probable=gold_a[1], predicted=a)
     val_aer = metric.aer()
+
+    # Compute translation accuracy.
+    val_accuracy = float(total_correct_predictions) / num_predictions
 
     # Compute NLL and perplexity.
     val_NLL = total_NLL / num_sentences
@@ -69,9 +79,25 @@ def validate(model, val_data, gold_alignments, vocab_src, vocab_tgt, device,
         summary_writer.add_scalar("validation/NLL", val_NLL, step)
         summary_writer.add_scalar("validation/perplexity", val_ppl, step)
         summary_writer.add_scalar("validation/AER", val_aer, step)
+        summary_writer.add_scalar("validation/accuracy", val_accuracy, step)
 
     # Print validation results.
-    print(f"validation NLL = {val_NLL:,.2f} -- validation ppl = {val_ppl:,.2f}"
-          f" -- validation AER = {val_aer:,.2f}")
+    print(f"validation accuracy = {val_accuracy:.2f} -- validation NLL = {val_NLL:,.2f}"
+          f" -- validation ppl = {val_ppl:,.2f} -- validation AER = {val_aer:,.2f}")
+
+    # Print / plot a sample alignment.
+    sen_idx = hparams.example_sentence_idx
+    sen_x, sen_y = val_data[sen_idx]
+    sen_a = list(sorted(alignments[sen_idx], key=lambda link: link[1]))
+    tokens_x = sen_x.split()
+    tokens_y = sen_y.split()
+    print(f"Source sentence: {sen_x}\nTarget sentence: {sen_y}")
+    if len(sen_a) == 0:
+        print(" - no alignments")
+    else:
+        for link in sen_a:
+            print(f" - {tokens_y[link[1]-1]} is aligned to {tokens_x[link[0]-1]}")
+    if summary_writer is not None:
+        alignment_summary(tokens_x, tokens_y, sen_a, summary_writer, "validation/alignment", step)
 
     return val_aer
