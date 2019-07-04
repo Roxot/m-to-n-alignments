@@ -64,11 +64,14 @@ class NeuralIBM1(nn.Module):
         with torch.no_grad():
 
             # Compute P(y|x, a)
+            seq_mask_x = x != self.pad_idx # [B, T_x]
             x_embed = self.src_embedder(x)
             batch_size = x_embed.size(0)
             longest_x = x_embed.size(1)
             py_given_xa = self.translation_layer(x_embed.view(batch_size * longest_x, self.emb_size))
             py_given_xa = py_given_xa.view(batch_size, longest_x, self.tgt_vocab_size) # [B, T_x, V_y]
+            py_given_xa = torch.where(seq_mask_x.unsqueeze(-1), py_given_xa,
+                                            py_given_xa.new_full([1], -float("inf")))
 
             longest_y = y.size(1)
             alignments = np.zeros([batch_size, longest_y], dtype=np.int)
