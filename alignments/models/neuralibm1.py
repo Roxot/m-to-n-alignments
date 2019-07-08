@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.functional as F
 import numpy as np
 
+from alignments.constants import epsilon
+
 class NeuralIBM1(nn.Module):
 
     def __init__(self, src_vocab_size, tgt_vocab_size, emb_size, hidden_size, pad_idx):
@@ -44,9 +46,10 @@ class NeuralIBM1(nn.Module):
     def loss(self, p_marginal, y, reduction="mean"):
         p_observed = torch.gather(p_marginal, -1, y.unsqueeze(-1))
         p_observed = p_observed.squeeze(-1)
-        log_likelihood = torch.log(p_observed).sum(dim=1)
+        log_likelihood = torch.log(p_observed + epsilon).sum(dim=1)
 
         loss = -log_likelihood
+
         if reduction == "mean":
             return loss.mean()
         elif reduction == "sum":

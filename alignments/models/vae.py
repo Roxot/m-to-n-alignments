@@ -147,7 +147,7 @@ class AlignmentVAE(nn.Module):
             if prior_param_1 > 0:
                 # prior_param_1 words per sentence
                 probs = prior_param_1 * (seq_mask_x.float() + epsilon) / (seq_len_x.unsqueeze(-1).float() + 1)
-                probs = torch.clamp(probs, max=(1-epsilon))
+                probs = torch.clamp(probs, max=(1-0.01))
                 probs = probs.unsqueeze(1).repeat(1, seq_mask_y.size(1), 1)
             elif prior_param_2 > 0:
                 # fixed prior_param_2 probability of an alignment
