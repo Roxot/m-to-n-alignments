@@ -23,6 +23,7 @@ python -m alignments.train --training_prefix toy-data/train \
                            --src split \
                            --tgt merged \
                            --model_type neuralibm1 \
+                           --use_gpu True \
                            --output_dir experiments/neuralibm1
 ```
 
@@ -36,6 +37,7 @@ python -m alignments.train --training_prefix toy-data/train \
                            --tgt merged \
                            --model_type bernoulli-RF \
                            --prior_param_1 1.0 \
+                           --use_gpu True \
                            --output_dir experiments/bernoulli-RF
 ```
 Seting either `prior_param_1` or `prior_param_2` for the Bernoulli REINFORCE model .
