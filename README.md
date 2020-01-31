@@ -5,7 +5,7 @@
 Needs at least Python 3.6 due to some features used, known to work with Python 3.7. To install dependencies run:
 
 ```
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Generate Toy Data
