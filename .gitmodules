@@ -1,3 +1,0 @@
-[submodule "kuma_MNIST"]
-	path = kuma_MNIST
-	url = git@github.com:nicola-decao/kuma_MNIST.git
