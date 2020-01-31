@@ -5,7 +5,7 @@
 Needs at least Python 3.6 due to some features used, known to work with Python 3.7. To install dependencies run:
 
 ```
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Generate Toy Data
@@ -45,3 +45,13 @@ If `prior_param_1 > 0`: On average align to `prior_param_1` source words.
 
 
 If `prior_param_2 > 0`: Fixed alignment probability for all soruce words of `0 < prior_param_2 < 1`
+
+This one needs a bit longer to converge due to variance of the REINFORCE estimator (and by default we only use a moving average baseline).
+
+### Short overview of the code
+* [alignments/train.py](alignments/train.py) is a general purpose training file used for all alignment models.
+* The [alignments/neuralibm1_helper.py](alignments/neuralibm1_helper.py) and [alignments/alignmentvae_helper.py](alignments/alignmentvae_helper.py) files implement the model-specific creation, training and validation steps for each model.
+* The [alignments/models](alignments/models) folder contains implementations for each specific model, the bit-vector model is contained in `alignmentvae.py`, with several ways to modle the bit vector implemented.
+* All hyperparameters are constructed in [alignments/hparams/hparams.py](alignments/hparams/hparams.py)
+* Re-usable architecture components are contained in [alignments/components](alignments/components)
+* All data-loading is implemented in [alignments/data](alignments/data)
