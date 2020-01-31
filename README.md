@@ -50,7 +50,7 @@ This one needs a bit longer to converge due to variance of the REINFORCE estimat
 
 ### Short overview of the code
 * [alignments/train.py](alignments/train.py) is a general purpose training file used for all alignment models.
-* The [alignments/neuralibm1_helper.py](alignments/neuralibm1_helper.py) and [alignments/bernoulli_helper.py](alignments/alignmentvae_helper.py) files implement the model-specific creation, training and validation steps for each model.
+* The [alignments/neuralibm1_helper.py](alignments/neuralibm1_helper.py) and [alignments/alignmentvae_helper.py](alignments/alignmentvae_helper.py) files implement the model-specific creation, training and validation steps for each model.
 * The [alignments/models](alignments/models) folder contains implementations for each specific model, the bit-vector model is contained in `alignmentvae.py`, with several ways to modle the bit vector implemented.
 * All hyperparameters are constructed in [alignments/hparams/hparams.py](alignments/hparams/hparams.py)
 * Re-usable architecture components are contained in [alignments/components](alignments/components)
