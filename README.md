@@ -1,0 +1,47 @@
+# m-to-m-alignments
+
+
+### Installation
+Needs at least Python 3.6 due to some features used, known to work with Python 3.7. To install dependencies run:
+
+```
+pip install requirements.txt
+```
+
+### Generate Toy Data
+For debugging purposes we can use a randomly generated toy dataset that consists of made up words constructed from one or more fixed word pieces. The goal of the aligner is to align each target merged word consisting of potentially multiple word pieces, to each word piece it belongs to in the source split data. This (aligning to multiple source words) is an impossible task for the Neural IBM 1 model, whereas the Bernoulli bit-vector model should be able to do this. The toy dataset can be generated as:  
+```
+./generate_toy_data.sh
+```
+
+### Train a Neural IBM 1 model
+Using default parameters one can train a Neural IBM 1 model on the toy dataset as:
+```
+mkdir experiments/
+python -m alignments.train --training_prefix toy-data/train \
+                           --validation_prefix toy-data/dev \
+                           --src split \
+                           --tgt merged \
+                           --model_type neuralibm1 \
+                           --output_dir experiments/neuralibm1
+```
+
+### Train an m-to-m alignment model with bit vectors and REINFORCE
+In order to train the Bernoulli bit-vector model using REINFORCE on the toy data one can run:
+```
+mkdir experiments/
+python -m alignments.train --training_prefix toy-data/train \
+                           --validation_prefix toy-data/dev \
+                           --src split \
+                           --tgt merged \
+                           --model_type bernoulli-RF \
+                           --prior_param_1 1.0 \
+                           --output_dir experiments/bernoulli-RF
+```
+Seting either `prior_param_1` or `prior_param_2` for the Bernoulli REINFORCE model .
+
+
+If `prior_param_1 > 0`: On average align to `prior_param_1` source words.
+
+
+If `prior_param_2 > 0`: Fixed alignment probability for all soruce words of `0 < prior_param_2 < 1`
