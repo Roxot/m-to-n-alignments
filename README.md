@@ -1,5 +1,6 @@
 # m-to-m-alignments
 
+Disclaimer: This code is under development and is not a finished product. As such, some functionality might not work or contain bugs.
 
 ### Installation
 Needs at least Python 3.6 due to some features used, known to work with Python 3.7. To install dependencies run:
