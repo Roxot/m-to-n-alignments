@@ -11,7 +11,7 @@ pip install -r requirements.txt
 An additional dependency not installed through the requirements file is [probabll/dists.pt](https://github.com/probabll/dists.pt). This can be installed as follows:
 
 ```
-git clone git@github.com:probabll/dists.pt.git
+git clone https://github.com/probabll/dists.pt.git
 cd dists.pt/
 pip install -r requirements.txt
 pip install .
