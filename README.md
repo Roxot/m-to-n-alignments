@@ -8,6 +8,15 @@ Needs at least Python 3.6 due to some features used, known to work with Python 3
 pip install -r requirements.txt
 ```
 
+An additional dependency not installed through the requirements file is [probabll/dists.pt](https://github.com/probabll/dists.pt). This can be installed as follows:
+
+```
+git clone git@github.com:probabll/dists.pt.git
+cd dists.pt/
+pip install -r requirements.txt
+pip install .
+```
+
 ### Generate Toy Data
 For debugging purposes we can use a randomly generated toy dataset that consists of made up words constructed from one or more fixed word pieces. The goal of the aligner is to align each target merged word consisting of potentially multiple word pieces, to each word piece it belongs to in the source split data. This (aligning to multiple source words) is an impossible task for the Neural IBM 1 model, whereas the Bernoulli bit-vector model should be able to do this. The toy dataset can be generated as:  
 ```
