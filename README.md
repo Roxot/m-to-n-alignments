@@ -55,7 +55,7 @@ Seting either `prior_param_1` or `prior_param_2` for the Bernoulli REINFORCE mod
 If `prior_param_1 > 0`: On average align to `prior_param_1` source words.
 
 
-If `prior_param_2 > 0`: Fixed alignment probability for all soruce words of `0 < prior_param_2 < 1`
+If `prior_param_2 > 0`: Fixed alignment probability for all source words of `0 < prior_param_2 < 1`
 
 This one needs a bit longer to converge due to variance of the REINFORCE estimator (and by default we only use a moving average baseline).
 
