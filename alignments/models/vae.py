@@ -5,8 +5,8 @@ import torch.distributions as torchdist
 import numpy as np
 
 from alignments.constants import epsilon
-from alignments.dist import BernoulliREINFORCE, BernoulliStraightThrough, BinaryConcrete, Kumaraswamy
-from alignments.dist import StretchedAndRectifiedDistribution
+from alignments.dist import BernoulliREINFORCE, BernoulliStraightThrough
+from probabll.distributions import BinaryConcrete, Kumaraswamy, Stretched, Rectified01
 from alignments.components import RNNEncoder
 
 class InferenceNetwork(nn.Module):
@@ -75,6 +75,9 @@ class InferenceNetwork(nn.Module):
 
         elif self.dist in ["kuma", "hardkuma"]:
 
+            # Not supported at the moment.
+            raise NotImplementedError()
+
             # Compute a using attention.
             keys_a = self.kuma_a_key_layer(x_enc) # [B, T_x, hidden_size]
             queries_a = self.kuma_a_query_layer(y_enc) # [B, T_y, hidden_size]
@@ -95,7 +98,7 @@ class InferenceNetwork(nn.Module):
             if self.dist == "kuma":
                 return q
             else:
-                return StretchedAndRectifiedDistribution(q, lower=-0.1, upper=1.1)
+                return Rectified01(Stretched(q, lower=-0.1, upper=1.1))
         else:
             raise Exception(f"Unknown dist option: {self.dist}")
 
@@ -157,7 +160,7 @@ class AlignmentVAE(nn.Module):
 
             return BernoulliREINFORCE(probs=probs, validate_args=True) # [B, T_y, T_x]
         elif self.dist == "concrete":
-            return BinaryConcrete(temperature=probs.new([1.0]), logits=torch.zeros_like(probs)) # TODO
+            raise NotImplementedError()
         elif self.dist in ["kuma", "hardkuma"]:
 
             if prior_param_1 > 0 and prior_param_2 > 0:
@@ -175,7 +178,7 @@ class AlignmentVAE(nn.Module):
             if self.dist == "kuma":
                 return p
             else:
-                return StretchedAndRectifiedDistribution(p, -0.1, 1.1)
+                return Rectified01(Stretched(p, lower=-0.1, upper=1.1))
 
     def _create_hardkuma_prior_table(self, prior_param_1, max_sentence_length, l=-0.1, r=1.1, N=10000):
         """

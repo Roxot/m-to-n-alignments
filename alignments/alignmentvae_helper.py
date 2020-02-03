@@ -48,10 +48,11 @@ def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparam
     summary_dict["num_sentences"] += x.size(0)
     summary_dict["KL"] += output_dict["KL"].sum().item()
     summary_dict["ELBO"] += output_dict["ELBO"].sum().item()
-    summary_dict["reward"] += output_dict["reward"].sum().item()
-    summary_dict["normalized_reward"] += output_dict["normalized_reward"].sum().item()
-    summary_dict["reward_var"] += output_dict["reward"].var().item()
-    summary_dict["normalized_reward_var"] += output_dict["normalized_reward"].var().item()
+    if "reward" in output_dict:
+        summary_dict["reward"] += output_dict["reward"].sum().item()
+        summary_dict["normalized_reward"] += output_dict["normalized_reward"].sum().item()
+        summary_dict["reward_var"] += output_dict["reward"].var().item()
+        summary_dict["normalized_reward_var"] += output_dict["normalized_reward"].var().item()
     if "reward_sc" in output_dict:
         summary_dict["reward_sc"] += output_dict["reward_sc"].sum().item()
 
@@ -66,8 +67,10 @@ def train_step(model, x, seq_mask_x, seq_len_x, y, seq_mask_y, seq_len_y, hparam
                 summary_dict["num_sentences"], step)
         summary_writer.add_scalar("train/normalized_reward_var", summary_dict["normalized_reward_var"] /\
                 summary_dict["num_sentences"], step)
-        summary_writer.add_scalar("train/reward_mean_ma", model.avg_reward, step)
-        summary_writer.add_scalar("train/reward_std_ma", model.std_reward, step)
+
+        if "reward" in output_dict:
+            summary_writer.add_scalar("train/reward_mean_ma", model.avg_reward, step)
+            summary_writer.add_scalar("train/reward_std_ma", model.std_reward, step)
         summary_writer.add_histogram("train/p(A)", pa.probs, step)
         summary_writer.add_histogram("train/q(A|x,y)", qa.probs, step)
         summary_writer.add_histogram("train/sampled_A", A, step)
