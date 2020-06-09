@@ -1,4 +1,4 @@
-# m-to-m-alignments
+# m-to-n-alignments
 
 Disclaimer: This code is under development and is not a finished product. As such, some functionality might not work or contain bugs.
 
@@ -37,7 +37,7 @@ python -m alignments.train --training_prefix toy-data/train \
                            --output_dir experiments/neuralibm1
 ```
 
-### Train an m-to-m alignment model with bit vectors and REINFORCE
+### Train an m-to-n alignment model with bit vectors and REINFORCE
 In order to train the Bernoulli bit-vector model using REINFORCE on the toy data one can run:
 ```
 mkdir experiments/
